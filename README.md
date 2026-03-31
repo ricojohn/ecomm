@@ -1,130 +1,95 @@
-# DutyFree — Laravel Duty-Free Ordering System
+# DutyFree Shop
 
-A duty-free ordering system built as a Laravel 12 assessment project. Customers can browse products, verify their traveler eligibility, and place orders. Admins manage the product catalog and update order statuses.
+A duty-free ordering system built with Laravel 12. Customers browse products, go through a traveler verification step, and place orders. Admins manage the catalog and track order statuses. It's a full end-to-end flow — authentication, cart, checkout, orders, and email notifications — kept intentionally clean so every part is easy to follow.
 
 ---
 
 ## Table of Contents
 
-1. [System Architecture](#system-architecture)
-2. [Technical Decisions](#technical-decisions)
-3. [Database Design](#database-design)
-4. [Features](#features)
-5. [How to Run the Application Locally](#how-to-run-the-application-locally)
-6. [Demo Accounts](#demo-accounts)
-7. [Tech Stack](#tech-stack)
+- [System Architecture](#system-architecture)
+- [Technical Decisions](#technical-decisions)
+- [Database Design](#database-design)
+- [Features](#features)
+- [How to Run Locally](#how-to-run-locally)
+- [Demo Accounts](#demo-accounts)
+- [Tech Stack](#tech-stack)
 
 ---
 
 ## System Architecture
 
-The application follows Laravel's standard MVC pattern with an additional Service layer for business logic that should not live in controllers.
+The app is structured around Laravel's MVC pattern with a small service layer sitting between the controllers and the models. The idea is simple: controllers handle HTTP, services handle business logic, models handle data.
 
 ```
-┌─────────┐     ┌──────────┐     ┌────────────┐     ┌─────────────────────┐
-│ Browser │────▶│ Routes   │────▶│ Middleware │────▶│    Controller       │
-└─────────┘     │ web.php  │     │ auth/guest │     │                     │
-                └──────────┘     └────────────┘     │  ┌───────────────┐  │
-                                                     │  │ FormRequest   │  │
-                                                     │  │ (Validation)  │  │
-                                                     │  └───────────────┘  │
-                                                     │  ┌───────────────┐  │
-                                                     │  │ Service Class │  │
-                                                     │  │ (Business     │  │
-                                                     │  │  Logic)       │  │
-                                                     │  └───────────────┘  │
-                                                     │  ┌───────────────┐  │
-                                                     │  │ Eloquent ORM  │  │
-                                                     │  └──────┬────────┘  │
-                                                     └─────────┼───────────┘
-                                                               │
-                                                    ┌──────────▼──────────┐
-                                                    │       MySQL         │
-                                                    └──────────┬──────────┘
-                                                               │
-                                                    ┌──────────▼──────────┐
-                                                    │    Blade Views      │
-                                                    │  (Bootstrap 5 UI)   │
-                                                    └─────────────────────┘
+Browser → web.php (routes) → Middleware → Controller
+                                              ├── FormRequest  (validates input)
+                                              ├── Service      (business logic)
+                                              └── Eloquent     (talks to MySQL)
+                                                      │
+                                                 Blade View
 ```
 
-### Layers
+### How the pieces fit together
 
-| Layer | Responsibility |
-|---|---|
-| **Routes** (`routes/web.php`) | Maps HTTP verbs + URIs to controllers; grouped by public / guest / customer / admin |
-| **Middleware** | `auth` guards customer and admin routes; `guest` prevents logged-in users from seeing login/register |
-| **Controllers** | Thin — receive input, delegate to services/models, return responses |
-| **Form Requests** | Encapsulate validation rules (`StoreTravelerRequest`, `StoreProductRequest`) |
-| **Service** | `TravelerVerificationService` — simulates an external eligibility check, decoupled from the HTTP layer |
-| **Models** | Eloquent models with relationships, accessors, and casts |
-| **Mail** | `OrderPlaced`, `OrderStatusUpdated`, `OrderCancelled` Mailable classes; logged via `MAIL_MAILER=log` |
-
-### Route Groups
+**Routes (`web.php`)** are grouped into four clear sections:
 
 ```
-Public      GET /                   Product listing (browse, no auth)
-            GET /products/{id}      Product detail
-
-Guest       GET|POST /login
-            GET|POST /register
-
-Auth        GET|POST /cart/*        Cart management
-            GET|POST /checkout/*    Traveler form → confirm → place order
-            GET|PATCH /orders/*     Order history and cancellation
-
-Admin       /admin/products/*       Product CRUD
-            /admin/orders/*         Order list, detail, status update
+Public   →  Anyone can browse products (no login required)
+Guest    →  Login and register pages (redirects away if already logged in)
+Customer →  Cart, checkout, and order history (must be logged in)
+Admin    →  Product CRUD and order management (must be logged in as admin)
 ```
 
-### Role System
+**Middleware** does the simple work — `auth` keeps unauthenticated users out of cart and checkout, `guest` stops logged-in users from hitting the login page again. Role enforcement (admin vs customer) lives inside the controllers themselves rather than in a separate middleware layer.
 
-Two roles are stored in the `users.role` column (`admin` / `customer`). Role enforcement is handled directly inside each admin controller with `abort_unless(auth()->user()->isAdmin(), 403)`. No middleware is used for role checks; Spatie Permission can be integrated later.
+**Form Requests** keep validation out of controllers. `StoreTravelerRequest` validates the traveler info at checkout, `StoreProductRequest` handles product creation/editing.
+
+**`TravelerVerificationService`** is the one service class in the project. It simulates what would normally be an external API call — checking that the flight number is valid, the departure date is in the future, and the traveler is eligible. Keeping it in its own class means the controller stays thin and the logic is easy to test or swap out later.
+
+**Mailables** (`OrderPlaced`, `OrderStatusUpdated`, `OrderCancelled`) handle email notifications. They write to the log file instead of sending real emails, so there's nothing to configure.
 
 ---
 
 ## Technical Decisions
 
-### Manual Authentication (not Laravel Breeze)
-Breeze scaffolds extra files that obscure how authentication works. Manual `LoginController`, `RegisterController`, and `LogoutController` keep the auth flow explicit and easy to review.
+These are the choices that might not be immediately obvious, and the reasoning behind them.
 
-### Database-Backed Cart
-The cart is persisted in the `carts` / `cart_items` tables rather than in the session. This means the cart survives browser restarts, supports proper stock queries, and can be inspected or managed from the admin side if needed.
+**Manual auth instead of Laravel Breeze**
+Breeze generates a lot of scaffolding that makes it harder to see what's actually happening. The three auth controllers (`LoginController`, `RegisterController`, `LogoutController`) do exactly what they say — nothing hidden.
 
-### `DB::transaction` + `lockForUpdate` on Order Placement
-When an order is placed, stock is decremented inside a transaction with a pessimistic lock (`lockForUpdate`) on the product rows. This prevents two concurrent checkouts from both "seeing" the same available stock and overselling.
+**Database-backed cart instead of session cart**
+Storing the cart in `carts` / `cart_items` tables means it persists across sessions, survives browser restarts, and works cleanly with stock validation. It also means the cart is a proper Eloquent relationship rather than a blob in the session.
 
-### Unique `checkout_token`
-A `Str::uuid()` token is generated and stored with each order. A second submission of the same cart (e.g. double-click, browser back + resubmit) will fail the unique constraint, preventing duplicate orders.
+**`DB::transaction` + `lockForUpdate` when placing an order**
+When two customers try to buy the last item at the same time, a standard read-then-write would let both through. Wrapping the stock deduction in a transaction with a pessimistic lock means only one request wins — the other gets an out-of-stock error.
 
-### Traveler Verification as a Service Class
-`App\Services\TravelerVerificationService` simulates calling an external eligibility API. It validates the flight number format (`[A-Z]{2}\d{3,4}`), confirms the departure date is in the future, and returns an eligibility result. Extracting this into a service keeps the controller thin and makes it easy to swap in a real API call later.
+**`checkout_token` to prevent duplicate orders**
+A UUID is generated for each checkout attempt and stored as a unique column on the order. If the same form gets submitted twice (double-click, back-and-resubmit), the second insert fails the unique constraint. Simple and effective.
 
-### Email Simulation via Log Driver
-Three Mailable classes (`OrderPlaced`, `OrderStatusUpdated`, `OrderCancelled`) demonstrate the full notification pattern. With `MAIL_MAILER=log` in `.env`, emails are written to `storage/logs/laravel.log` instead of being sent — no SMTP setup needed to demo or test the feature.
+**Role column instead of a full permission package**
+Admin vs customer is stored as a string in `users.role`. Each admin controller checks `abort_unless(auth()->user()->isAdmin(), 403)` at the top. It's explicit and readable. Spatie Permission is a straightforward upgrade when the project grows.
 
-### Client-Side Search and Category Filter
-Product search (by name) and category filtering run entirely in the browser using jQuery. All products are loaded at once via `Product::get()`. This avoids server round-trips and page reloads, giving instant feedback on the product listing page.
+**Client-side search and category filter**
+With a small product catalog, there's no reason to hit the server every time someone types or clicks a category. All products are loaded once, and jQuery handles the filtering in the browser — instant feedback, no page reloads.
 
-### Role Check Inside Controllers
-`abort_unless(auth()->user()->isAdmin(), 403)` is called at the top of each admin controller method. This is deliberate — it keeps the authorization logic visible and co-located with the action it protects, which is appropriate for an assessment project. Middleware-based or Spatie-based role checks are a straightforward drop-in upgrade.
+**Emails log to file instead of sending**
+Setting `MAIL_MAILER=log` means every "sent" email shows up in `storage/logs/laravel.log`. The full email notification flow (order placed, status updated, cancelled) is demonstrated without needing an SMTP server or a Mailtrap account.
 
 ---
 
 ## Database Design
 
-Six tables form the core schema. Relationships are enforced at the database level with foreign key constraints.
+Six tables. The schema is intentionally straightforward — each table has one clear purpose and the foreign keys make the relationships obvious.
 
-```mermaid
-erDiagram
-    users {
-        bigint id PK
-        string name
-        string email
-        string password
-        string role
-        timestamps created_at
-    }
+Diagram
+users {
+bigint id PK
+string name
+string email
+string password
+string role
+timestamps created_at
+}
 
     products {
         bigint id PK
@@ -183,26 +148,25 @@ erDiagram
         timestamps created_at
     }
 
-    users ||--o| carts : "has one"
-    carts ||--o{ cart_items : "has many"
-    products ||--o{ cart_items : "referenced by"
-    users ||--o{ orders : "places"
-    orders ||--o{ order_items : "contains"
-    products ||--o{ order_items : "referenced by"
-```
+    users || carts : "has one"
+    carts || cart_items : "has many"
+    products || cart_items : "referenced by"
+    users || orders : "places"
+    orders || order_items : "contains"
+    products || order_items : "referenced by"
 
-### Key Design Notes
+````
 
-- **`order_items.product_id` is nullable** — if a product is deleted after an order is placed, the order item record is preserved (with `sku` and `product_name` snapshotted at checkout time) rather than cascade-deleted.
-- **`orders.checkout_token`** — unique UUID generated per checkout attempt to prevent duplicate order placement.
-- **`orders.eligibility_status / eligibility_message`** — stores the result of the `TravelerVerificationService` check alongside the order for auditability.
-- **Order statuses**: `pending` → `verified` → `paid` → `ready_for_pickup` (or `cancelled`).
+A few things worth noting:
 
-### Migration Files
+- `order_items.product_id` is **nullable**. When a product gets deleted, the order item stays intact. The `sku` and `product_name` are snapshotted at the time of checkout specifically so the order history always shows what was actually purchased.
+- `orders.checkout_token` is a unique UUID per checkout — the duplicate-order guard mentioned above.
+- `orders.eligibility_status` and `eligibility_message` record the result of the traveler check so it's auditable after the fact.
+- Order status flows: `pending → verified → paid → ready_for_pickup`, or `cancelled` if the customer cancels before it's processed.
 
-All migrations are in `database/migrations/`:
+### Migration files
 
-| File | Table |
+| Migration | Creates |
 |---|---|
 | `0001_01_01_000000_create_users_table.php` | `users`, `password_reset_tokens`, `sessions` |
 | `2026_01_01_000010_create_products_table.php` | `products` |
@@ -215,146 +179,131 @@ All migrations are in `database/migrations/`:
 
 ## Features
 
-| Area | Feature |
-|---|---|
-| Auth | Customer registration, login, logout (manual Laravel auth) |
-| Products | Public listing with live category filter and name search (client-side) |
-| Products | Product detail page |
-| Products | Admin CRUD (create, edit, update) |
-| Cart | Database-backed cart per authenticated customer |
-| Cart | AJAX add-to-cart with Bootstrap toast notifications (no page reload) |
-| Cart | Update quantity, remove items, live subtotal/total |
-| Checkout | Traveler information form with server-side validation |
-| Checkout | `TravelerVerificationService` eligibility simulation |
-| Checkout | Order confirmation page before final placement |
-| Checkout | `DB::transaction` + `lockForUpdate` stock deduction |
-| Checkout | Duplicate prevention via unique `checkout_token` |
-| Orders | Customer order history and order detail |
-| Orders | Customer cancellation of pending orders (stock restored) |
-| Orders | Admin view of all orders with traveler and eligibility info |
-| Orders | Admin status update (`verified`, `paid`, `ready_for_pickup`) |
-| Email | `OrderPlaced`, `OrderStatusUpdated`, `OrderCancelled` Mailables (logged) |
+**For customers:**
+- Register, log in, log out
+- Browse all duty-free products — filter by category or search by name, no page reload
+- View individual product details
+- Add items to cart via AJAX (cart badge updates instantly, Bootstrap toast confirms the action)
+- Manage cart — update quantities, remove items, see running total
+- Fill in traveler details before checkout (passport, flight number, departure date, etc.)
+- System verifies eligibility before allowing the order through
+- Review the order on a confirmation page before committing
+- View full order history and individual order details
+- Cancel a pending order — stock is automatically restored
+
+**For admins:**
+- Create, edit, and manage all products
+- View all orders with full traveler and eligibility details
+- Update order status: verified → paid → ready for pickup
+- Status changes trigger an email notification to the customer (logged)
 
 ---
 
-## How to Run the Application Locally
+## How to Run Locally
 
-### Prerequisites
+### What you need
 
-- PHP 8.2 or higher (with extensions: `pdo_mysql`, `mbstring`, `openssl`, `tokenizer`, `xml`, `ctype`, `json`)
+- PHP 8.2+ with `pdo_mysql`, `mbstring`, and the usual extensions
 - [Composer](https://getcomposer.org/)
 - MySQL 8.0+
 - Node.js 18+ and npm
 
-### Steps
+### Setup
 
-**1. Clone or unzip the project**
+**1. Get the code**
 
 ```bash
 git clone https://github.com/<your-username>/<repo-name>.git
 cd <repo-name>
-```
+````
 
-**2. Install PHP dependencies**
+**2. Install dependencies**
 
 ```bash
 composer install
+npm install && npm run build
 ```
 
-**3. Install JS dependencies and compile assets**
-
-```bash
-npm install
-npm run build
-```
-
-**4. Configure environment**
+**3. Set up your environment file**
 
 ```bash
 cp .env.example .env
 php artisan key:generate
 ```
 
-**5. Set database credentials in `.env`**
+**4. Point it at your database**
+
+Open `.env` and update these lines:
 
 ```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
 DB_DATABASE=ecomm
 DB_USERNAME=root
 DB_PASSWORD=
 ```
 
-Create the database in MySQL first if it does not exist:
+If the database doesn't exist yet, create it in MySQL:
 
 ```sql
 CREATE DATABASE ecomm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-**6. Confirm email logging is enabled in `.env`**
+**5. Make sure email logging is on**
+
+Check that `.env` has this (it should by default):
 
 ```env
 MAIL_MAILER=log
 ```
 
-This writes all outgoing emails to `storage/logs/laravel.log` — no SMTP setup required.
-
-**7. Run migrations and seed demo data**
+**6. Run migrations and load demo data**
 
 ```bash
 php artisan migrate:fresh --seed
 ```
 
-This creates all tables and seeds:
-- 1 admin user
-- 1 customer user
-- 10 sample products across Liquor, Perfume, and Tobacco categories
+This sets up all tables and creates two demo accounts plus 10 sample products.
 
-**8. Start the development server**
+**7. Start the server**
 
 ```bash
 php artisan serve
 ```
 
-Open [http://localhost:8000](http://localhost:8000) in your browser.
+Then open [http://localhost:8000](http://localhost:8000).
 
-> **Note (PowerShell):** Use `;` instead of `&&` to chain commands:
-> `php artisan migrate:fresh --seed; php artisan serve`
+> If you're on PowerShell, use `;` instead of `&&` to chain commands.
 
-### Viewing Simulated Emails
+### Viewing emails
 
-All emails (order placed, status updated, order cancelled) are logged instead of sent. View them at:
+Since emails are logged instead of sent, you can find them in:
 
 ```
 storage/logs/laravel.log
 ```
 
-Search the log for `From:` or `Subject:` to locate email entries.
+Search for `Subject:` to jump straight to an email entry.
 
 ---
 
 ## Demo Accounts
 
-| Role     | Email                  | Password |
-|----------|------------------------|----------|
-| Admin    | admin@ecomm.com        | password |
-| Customer | customer@ecomm.com     | password |
+| Role     | Email              | Password |
+| -------- | ------------------ | -------- |
+| Admin    | admin@ecomm.com    | password |
+| Customer | customer@ecomm.com | password |
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Framework | Laravel 12 |
-| Language | PHP 8.2+ |
-| Database | MySQL 8 |
-| ORM | Eloquent |
-| Templating | Blade |
-| UI | Bootstrap 5 (CDN) + Bootstrap Icons |
-| JS | jQuery 3.7 (AJAX, client-side filter) |
-| Email | Laravel Mailables + Log driver |
-| Build | Vite (Laravel default) |
-| Timezone | Asia/Manila |
-| Currency | Philippine Peso (₱) |
+|            |                                               |
+| ---------- | --------------------------------------------- |
+| Framework  | Laravel 12                                    |
+| Language   | PHP 8.2+                                      |
+| Database   | MySQL 8 with Eloquent ORM                     |
+| Frontend   | Blade + Bootstrap 5 + Bootstrap Icons         |
+| JavaScript | jQuery 3.7 (AJAX cart, client-side filtering) |
+| Email      | Laravel Mailables via log driver              |
+| Build tool | Vite                                          |
+| Timezone   | Asia/Manila                                   |
+| Currency   | Philippine Peso (₱)                           |
