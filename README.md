@@ -81,15 +81,16 @@ Setting `MAIL_MAILER=log` means every "sent" email shows up in `storage/logs/lar
 
 Six tables. The schema is intentionally straightforward — each table has one clear purpose and the foreign keys make the relationships obvious.
 
-Diagram
-users {
-bigint id PK
-string name
-string email
-string password
-string role
-timestamps created_at
-}
+```mermaid
+erDiagram
+    users {
+        bigint id PK
+        string name
+        string email
+        string password
+        string role
+        timestamps created_at
+    }
 
     products {
         bigint id PK
@@ -148,14 +149,13 @@ timestamps created_at
         timestamps created_at
     }
 
-    users || carts : "has one"
-    carts || cart_items : "has many"
-    products || cart_items : "referenced by"
-    users || orders : "places"
-    orders || order_items : "contains"
-    products || order_items : "referenced by"
-
-````
+    users ||--o| carts : "has one"
+    carts ||--o{ cart_items : "has many"
+    products ||--o{ cart_items : "referenced by"
+    users ||--o{ orders : "places"
+    orders ||--o{ order_items : "contains"
+    products ||--o{ order_items : "referenced by"
+```
 
 A few things worth noting:
 
@@ -203,92 +203,103 @@ A few things worth noting:
 
 ### What you need
 
-- PHP 8.2+ with `pdo_mysql`, `mbstring`, and the usual extensions
+- [XAMPP](https://www.apachefriends.org/) — provides PHP 8.2+ and MySQL/MariaDB out of the box
 - [Composer](https://getcomposer.org/)
-- MySQL 8.0+
 - Node.js 18+ and npm
 
 ### Setup
 
-**1. Get the code**
+**1. Start XAMPP**
+
+Open the XAMPP Control Panel and start both **Apache** and **MySQL**.
+
+**2. Create the database**
+
+Open [phpMyAdmin](http://localhost/phpmyadmin), click **New**, and create a database named `ecomm` with collation `utf8mb4_unicode_ci`.
+
+Or paste this into the phpMyAdmin SQL tab:
+
+```sql
+CREATE DATABASE ecomm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+**3. Clone the repository**
 
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
-````
+git clone https://github.com/ricojohn/ecomm.git
+cd ecomm
+```
 
-**2. Install dependencies**
+**4. Install dependencies**
 
 ```bash
 composer install
-npm install && npm run build
+npm install
+npm run build
 ```
 
-**3. Set up your environment file**
+**5. Set up your environment file**
 
 ```bash
 cp .env.example .env
 php artisan key:generate
 ```
 
-**4. Point it at your database**
+**6. Point it at your XAMPP database**
 
-Open `.env` and update these lines:
+Open `.env` and confirm these values (XAMPP's default MySQL has no password):
 
 ```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
 DB_DATABASE=ecomm
 DB_USERNAME=root
 DB_PASSWORD=
 ```
 
-If the database doesn't exist yet, create it in MySQL:
+**7. Confirm email logging is on**
 
-```sql
-CREATE DATABASE ecomm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-
-**5. Make sure email logging is on**
-
-Check that `.env` has this (it should by default):
+Check that `.env` has this (it should be the default):
 
 ```env
 MAIL_MAILER=log
 ```
 
-**6. Run migrations and load demo data**
+**8. Run migrations and seed demo data**
 
 ```bash
 php artisan migrate:fresh --seed
 ```
 
-This sets up all tables and creates two demo accounts plus 10 sample products.
+This creates all the tables and loads two demo accounts plus 10 sample products.
 
-**7. Start the server**
+**9. Start the development server**
 
 ```bash
 php artisan serve
 ```
 
-Then open [http://localhost:8000](http://localhost:8000).
+Open [http://localhost:8000](http://localhost:8000) in your browser.
 
-> If you're on PowerShell, use `;` instead of `&&` to chain commands.
+> **PowerShell tip:** Use `;` instead of `&&` to chain commands, e.g. `php artisan migrate:fresh --seed; php artisan serve`
 
-### Viewing emails
+### Viewing simulated emails
 
-Since emails are logged instead of sent, you can find them in:
+Emails are logged to a file instead of actually sent. You can find them here:
 
 ```
 storage/logs/laravel.log
 ```
 
-Search for `Subject:` to jump straight to an email entry.
+Search for `Subject:` in the file to jump to any email entry.
 
 ---
 
 ## Demo Accounts
 
 | Role     | Email              | Password |
-| -------- | ------------------ | -------- |
+|----------|--------------------|----------|
 | Admin    | admin@ecomm.com    | password |
 | Customer | customer@ecomm.com | password |
 
@@ -296,14 +307,15 @@ Search for `Subject:` to jump straight to an email entry.
 
 ## Tech Stack
 
-|            |                                               |
-| ---------- | --------------------------------------------- |
-| Framework  | Laravel 12                                    |
-| Language   | PHP 8.2+                                      |
-| Database   | MySQL 8 with Eloquent ORM                     |
-| Frontend   | Blade + Bootstrap 5 + Bootstrap Icons         |
+| | |
+|---|---|
+| Framework | Laravel 12 |
+| Language | PHP 8.2+ |
+| Database | MySQL/MariaDB via XAMPP |
+| ORM | Eloquent |
+| Frontend | Blade + Bootstrap 5 + Bootstrap Icons |
 | JavaScript | jQuery 3.7 (AJAX cart, client-side filtering) |
-| Email      | Laravel Mailables via log driver              |
-| Build tool | Vite                                          |
-| Timezone   | Asia/Manila                                   |
-| Currency   | Philippine Peso (₱)                           |
+| Email | Laravel Mailables via log driver |
+| Build tool | Vite |
+| Timezone | Asia/Manila |
+| Currency | Philippine Peso (₱) |

@@ -54,7 +54,7 @@
                             <a class="nav-link" href="{{ route('cart.index') }}">
                                 <i class="bi bi-cart3"></i>
                                 <span class="badge bg-warning text-dark" id="cart-count">
-                                    {{ auth()->user()->cart?->items->sum('quantity') ?? 0 }}
+                                    {{ auth()->user()->cart?->items->count() ?? 0 }}
                                 </span>
                             </a>
                         </li>
